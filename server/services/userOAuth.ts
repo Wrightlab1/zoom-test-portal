@@ -109,26 +109,58 @@ export class UserOAuthService {
       this.event(p.id, null, 'failed', { code: q.error, message: q.error_description ?? q.error, detail: 'Zoom returned an error to the redirect URI' });
       return { ok: false, status: 400, title: 'Authorization was not granted', message: `Zoom returned: ${q.error}${q.error_description ? ` — ${q.error_description}` : ''}` };
     }
-    if (!q.code || !q.state) {
-      this.event(p.id, null, 'failed', { detail: 'Callback without code or state', code: 'missing_param' });
-      return { ok: false, status: 400, title: 'Invalid callback', message: 'The callback is missing code or state.' };
-    }
-    const pending = this.consume(q.state);
-    if (!pending) {
-      this.event(p.id, null, 'failed', { code: 'invalid_state', detail: 'Unknown, expired or already-used state — possible replay or stale tab.' });
-      return { ok: false, status: 400, title: 'Invalid or expired state', message: 'This authorization link was already used or has expired. Start again from the portal.' };
-    }
-    if (pending.profile_id !== p.id) {
-      this.event(p.id, null, 'failed', { code: 'state_mismatch', detail: 'State belongs to a different profile.' });
-      return { ok: false, status: 400, title: 'State mismatch', message: 'This state was issued for a different profile.' };
+    const paramNames = Object.keys(q).filter((k) => q[k] !== undefined);
+    if (!q.code) {
+      if (q.state) this.consume(q.state);
+      this.event(p.id, null, 'failed', { code: 'missing_code', detail: `Callback without code (query parameters present: ${paramNames.join(', ') || 'none'})` });
+      return { ok: false, status: 400, title: 'Invalid callback', message: 'Zoom redirected here without an authorization code.' };
     }
 
-    const verifier = this.ctx.cipher.decNullable(pending.verifier_enc, A_VERIFIER);
-    const form: Record<string, string> = { grant_type: 'authorization_code', code: q.code, redirect_uri: pending.redirect_uri };
+    let redirectUri: string;
+    let verifier: string | null = null;
+    let origin: 'portal' | 'marketplace';
+    if (q.state) {
+      const pending = this.consume(q.state);
+      if (!pending) {
+        this.event(p.id, null, 'failed', { code: 'invalid_state', detail: 'Unknown, expired or already-used state — possible replay or stale tab.' });
+        return { ok: false, status: 400, title: 'Invalid or expired state', message: 'This authorization link was already used or has expired. Start again from the portal.' };
+      }
+      if (pending.profile_id !== p.id) {
+        this.event(p.id, null, 'failed', { code: 'state_mismatch', detail: 'State belongs to a different profile.' });
+        return { ok: false, status: 400, title: 'State mismatch', message: 'This state was issued for a different profile.' };
+      }
+      redirectUri = pending.redirect_uri;
+      verifier = this.ctx.cipher.decNullable(pending.verifier_enc, A_VERIFIER);
+      origin = 'portal';
+    } else {
+      // A code without state means consent started on Zoom's side (Marketplace "Add" / "Local Test" /
+      // the app's authorization URL), not from the portal's Authorize button. Accepting it skips the
+      // login-CSRF protection that state provides, so it is an explicit per-profile opt-in.
+      if (!p.accept_marketplace_installs) {
+        this.event(p.id, null, 'failed', {
+          code: 'no_state',
+          detail:
+            'Zoom redirected with a code but no state: consent was started from the Zoom Marketplace (Add / Local Test / authorization URL), not from the portal. Rejected; enable "Accept installs started from the Zoom Marketplace" on the profile to allow this.',
+        });
+        return {
+          ok: false,
+          status: 400,
+          title: 'Authorization started outside the portal',
+          message:
+            'This consent came from the Zoom Marketplace (Add / Local Test), which does not include the portal\'s state value, so it was rejected. Either click "Authorize…" on the profile in the portal, or edit the profile, enable "Accept installs started from the Zoom Marketplace", and add the app again.',
+        };
+      }
+      const urls = this.publicUrls.forProfile(p.slug);
+      if (!urls) return { ok: false, status: 409, title: 'No public URL', message: 'The portal has no public URL configured, so it cannot rebuild the redirect URI.' };
+      redirectUri = urls.redirectUri;
+      origin = 'marketplace';
+    }
+
+    const form: Record<string, string> = { grant_type: 'authorization_code', code: q.code, redirect_uri: redirectUri };
     if (verifier) form.code_verifier = verifier;
     const r = await this.oauth.token(p, form, null);
     if (!r.ok || !r.tokens) {
-      this.event(p.id, null, 'failed', { status: r.status, code: r.errorCode, message: r.errorMessage, callId: r.callId, detail: 'Code exchange failed' });
+      this.event(p.id, null, 'failed', { status: r.status, code: r.errorCode, message: r.errorMessage, callId: r.callId, detail: `Code exchange failed (${origin === 'marketplace' ? 'Marketplace-initiated, no state' : 'started from portal'})` });
       return { ok: false, status: 502, title: 'Token exchange failed', message: `Zoom said: ${r.errorMessage ?? 'unknown error'}` };
     }
 
@@ -152,7 +184,7 @@ export class UserOAuthService {
         zoomAccountId: me.accountId,
       });
     })();
-    this.event(p.id, row.id, 'issued', { status: r.status, callId: r.callId, detail: me.id ? `as ${me.email ?? me.id}` : `user lookup failed: ${me.error}` });
+    this.event(p.id, row.id, 'issued', { status: r.status, callId: r.callId, detail: `${me.id ? `as ${me.email ?? me.id}` : `user lookup failed: ${me.error}`}${origin === 'marketplace' ? ' — Marketplace-initiated (no state)' : ''}` });
     return {
       ok: true,
       status: 200,

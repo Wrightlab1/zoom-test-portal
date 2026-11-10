@@ -15,6 +15,7 @@ export interface ProfileRow {
   account_id: string | null;
   webhook_secret_enc: string | null;
   use_pkce: number;
+  accept_marketplace_installs: number;
   auto_refresh: number;
   scopes_requested: string | null;
   notes: string | null;
@@ -33,6 +34,7 @@ export interface ProfileView {
   accountId: string | null;
   webhookSecretHint: string | null;
   usePkce: boolean;
+  acceptMarketplaceInstalls: boolean;
   autoRefresh: boolean;
   scopesRequested: string | null;
   notes: string | null;
@@ -50,6 +52,7 @@ export interface ProfileInput {
   accountId?: string | null;
   webhookSecret?: string | null;
   usePkce?: boolean;
+  acceptMarketplaceInstalls?: boolean;
   autoRefresh?: boolean;
   scopesRequested?: string | null;
   notes?: string | null;
@@ -113,6 +116,7 @@ export class ProfilesRepo {
       accountId: p.account_id,
       webhookSecretHint: ws ? mask(ws) : null,
       usePkce: !!p.use_pkce,
+      acceptMarketplaceInstalls: !!p.accept_marketplace_installs,
       autoRefresh: !!p.auto_refresh,
       scopesRequested: p.scopes_requested,
       notes: p.notes,
@@ -137,8 +141,8 @@ export class ProfilesRepo {
     secrets.add(input.webhookSecret);
     const info = this.db
       .prepare(
-        `INSERT INTO profiles (slug, name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, auto_refresh, scopes_requested, notes, created_at, updated_at)
-         VALUES (@slug, @name, @type, @client_id, @cs, @account_id, @ws, @use_pkce, @auto_refresh, @scopes, @notes, @now, @now)`,
+        `INSERT INTO profiles (slug, name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, accept_marketplace_installs, auto_refresh, scopes_requested, notes, created_at, updated_at)
+         VALUES (@slug, @name, @type, @client_id, @cs, @account_id, @ws, @use_pkce, @ami, @auto_refresh, @scopes, @notes, @now, @now)`,
       )
       .run({
         slug: this.uniqueSlug(input.slug || input.name),
@@ -149,6 +153,7 @@ export class ProfilesRepo {
         account_id: input.type === 's2s' ? (input.accountId ?? null) : null,
         ws: this.cipher.encNullable(input.webhookSecret, A_WEBHOOK),
         use_pkce: input.usePkce ? 1 : 0,
+        ami: input.acceptMarketplaceInstalls ? 1 : 0,
         auto_refresh: input.autoRefresh === false ? 0 : 1,
         scopes: input.scopesRequested ?? null,
         notes: input.notes ?? null,
@@ -180,6 +185,7 @@ export class ProfilesRepo {
       set('webhook_secret_enc', this.cipher.encNullable(input.webhookSecret, A_WEBHOOK));
     }
     if (input.usePkce !== undefined) set('use_pkce', input.usePkce ? 1 : 0);
+    if (input.acceptMarketplaceInstalls !== undefined) set('accept_marketplace_installs', input.acceptMarketplaceInstalls ? 1 : 0);
     if (input.autoRefresh !== undefined) set('auto_refresh', input.autoRefresh ? 1 : 0);
     if (input.scopesRequested !== undefined) set('scopes_requested', input.scopesRequested);
     if (input.notes !== undefined) set('notes', input.notes);
@@ -193,8 +199,8 @@ export class ProfilesRepo {
     const now = Date.now();
     const info = this.db
       .prepare(
-        `INSERT INTO profiles (slug, name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, auto_refresh, scopes_requested, notes, created_at, updated_at)
-         SELECT @slug, @name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, auto_refresh, scopes_requested, notes, @now, @now FROM profiles WHERE id = @id`,
+        `INSERT INTO profiles (slug, name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, accept_marketplace_installs, auto_refresh, scopes_requested, notes, created_at, updated_at)
+         SELECT @slug, @name, type, client_id, client_secret_enc, account_id, webhook_secret_enc, use_pkce, accept_marketplace_installs, auto_refresh, scopes_requested, notes, @now, @now FROM profiles WHERE id = @id`,
       )
       .run({ id, slug: this.uniqueSlug(`${p.slug}-copy`), name: `${p.name} (copy)`, now });
     return this.get(Number(info.lastInsertRowid));

@@ -213,7 +213,8 @@ Note: S2S tokens must not use the `me` keyword. Call `/users/{userId or email}` 
    Then click **Validate**.
 
 6. Optional: tick **Use PKCE (S256)** on the profile to test the PKCE variant.
-7. In the portal, click **Authorize…**. A new tab opens Zoom's consent page; after you approve, Zoom redirects to the portal's callback. The profile page updates live.
+7. In the portal, click **Authorize…**. Start consent from the portal, not from the Marketplace's **Add** / **Local Test** button: those Zoom-side links carry no `state`, and the portal rejects such callbacks by default. To test the Marketplace install flow itself, edit the profile and enable **Accept installs started from the Zoom Marketplace**. That skips the `state` check for callbacks without one (login-CSRF risk), and PKCE cannot apply to them.
+8. After clicking **Authorize…**, a new tab opens Zoom's consent page; after you approve, Zoom redirects to the portal's callback. The profile page updates live.
 
 How authorizations behave:
 
@@ -464,6 +465,7 @@ Work through this once with real credentials. Each step says what "pass" looks l
 |---|---|
 | Zoom **4709** Redirect URI mismatch | Marketplace OAuth Redirect URL / Allow List not identical to the portal's value (scheme, host, path, trailing slash). The URL changed without a reserved domain: see the warning banner. |
 | **4702/4704** invalid client | Wrong client ID or secret, or S2S credentials used for a General app (or vice versa). |
+| Callback page: **Authorization started outside the portal** / "missing code or state" | Consent was started from the Marketplace (Add / Local Test / authorization URL), which sends no `state`. Use **Authorize…** in the portal, or enable *Accept installs started from the Zoom Marketplace* on the profile. |
 | **4733 / 4734** code expired / invalid | Consent took longer than 5 minutes, or the callback was replayed. Authorize again. |
 | **4741** token revoked | The same user re-authorized (the old authorization is shown as superseded). Use the newest one. |
 | `400 Invalid Token!` on refresh | The refresh token was already rotated or revoked; the authorization is marked *failed*. Authorize again. |

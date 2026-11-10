@@ -190,6 +190,61 @@ describe('user OAuth (authorization code) against mock Zoom', () => {
   });
 });
 
+describe('Marketplace-initiated installs (callback with code but no state)', () => {
+  /** What Zoom's Marketplace "Add" / "Local Test" button does: no state, no PKCE. */
+  async function marketplaceAdd(p: any, user: string) {
+    const u = new URL(`${h.mockUrl}/oauth/authorize`);
+    u.searchParams.set('response_type', 'code');
+    u.searchParams.set('client_id', USER_CLIENT.clientId);
+    u.searchParams.set('redirect_uri', p.urls.redirectUri);
+    u.searchParams.set('mock_user', user);
+    const r1 = await fetch(u, { redirect: 'manual' });
+    const cb = r1.headers.get('location')!;
+    expect(new URL(cb).searchParams.has('state')).toBe(false);
+    const r2 = await fetch(cb);
+    return { status: r2.status, html: await r2.text() };
+  }
+
+  it('rejects by default with an explanation, and records why', async () => {
+    const p = await makeProfile('Marketplace App', false);
+    const r = await marketplaceAdd(p, 'mockuser005');
+    expect(r.status).toBe(400);
+    expect(r.html).toContain('Authorization started outside the portal');
+    const ev = (await h.admin.get(`/api/profiles/${p.id}/token-events`)).body[0];
+    expect(ev).toMatchObject({ kind: 'failed', error_code: 'no_state' });
+    expect((await h.admin.get(`/api/profiles/${p.id}`)).body.authorizations).toHaveLength(0);
+  });
+
+  it('accepts when the profile opts in, and labels the authorization', async () => {
+    const p = (await h.admin.get('/api/profiles')).body.find((x: any) => x.name === 'Marketplace App');
+    const upd = await h.admin.put(`/api/profiles/${p.id}`, { acceptMarketplaceInstalls: true });
+    expect(upd.body.acceptMarketplaceInstalls).toBe(true);
+    const r = await marketplaceAdd(p, 'mockuser005');
+    expect(r.status).toBe(200);
+    expect(r.html).toContain('Authorized as');
+    const full = (await h.admin.get(`/api/profiles/${p.id}`)).body;
+    expect(full.authorizations[0]).toMatchObject({ status: 'active', zoomEmail: 'user5.test@example.test', usedPkce: false });
+    const ev = (await h.admin.get(`/api/profiles/${p.id}/token-events`)).body[0];
+    expect(ev.detail).toContain('Marketplace-initiated');
+  });
+
+  it('still verifies state when one is present, even with the opt-in', async () => {
+    const p = (await h.admin.get('/api/profiles')).body.find((x: any) => x.name === 'Marketplace App');
+    const r = await fetch(`${p.urls.redirectUri}?code=abc&state=${'B'.repeat(43)}`);
+    expect(r.status).toBe(400);
+    expect(await r.text()).toContain('Invalid or expired state');
+  });
+
+  it('reports a callback without a code', async () => {
+    const p = (await h.admin.get('/api/profiles')).body.find((x: any) => x.name === 'Marketplace App');
+    const r = await fetch(`${p.urls.redirectUri}?foo=1`);
+    expect(r.status).toBe(400);
+    const ev = (await h.admin.get(`/api/profiles/${p.id}/token-events`)).body[0];
+    expect(ev).toMatchObject({ error_code: 'missing_code' });
+    expect(ev.detail).toContain('foo');
+  });
+});
+
 describe('tunnel URL change detection (fake ngrok forwarder)', () => {
   it('builds URLs from the tunnel and warns when an unreserved URL changes', async () => {
     const svc = h.app.ctx.services;

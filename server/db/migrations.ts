@@ -289,4 +289,9 @@ DROP INDEX api_calls_duration;
 DROP INDEX api_calls_method;
 `,
   },
+  {
+    version: 3,
+    name: 'per-profile opt-in for Marketplace-initiated installs (callback without state)',
+    sql: `ALTER TABLE profiles ADD COLUMN accept_marketplace_installs INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];

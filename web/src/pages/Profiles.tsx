@@ -33,6 +33,7 @@ export interface Profile {
   accountId: string | null;
   webhookSecretHint: string | null;
   usePkce: boolean;
+  acceptMarketplaceInstalls: boolean;
   autoRefresh: boolean;
   scopesRequested: string | null;
   notes: string | null;
@@ -151,6 +152,7 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
             {p.type === 's2s' && (<><dt>Account ID</dt><dd>{p.accountId}</dd></>)}
             <dt>Webhook secret</dt><dd>{p.webhookSecretHint ?? <span className="badge">not set</span>}</dd>
             {p.type === 'user' && (<><dt>PKCE</dt><dd>{p.usePkce ? 'S256' : 'off'}</dd></>)}
+            {p.type === 'user' && (<><dt>Marketplace installs</dt><dd>{p.acceptMarketplaceInstalls ? <span className="badge warn" title="Callbacks without state are accepted">accepted (no state check)</span> : 'rejected (state required)'}</dd></>)}
             {p.type === 'user' && p.scopesRequested && (<><dt>Scopes param</dt><dd>{p.scopesRequested}</dd></>)}
             <dt>Auto refresh</dt><dd>{p.autoRefresh ? 'on' : 'off'}</dd>
           </dl>
@@ -269,6 +271,7 @@ function ProfileForm({ profile, onClose, onSaved }: { profile?: Profile; onClose
     clientId: profile?.clientId ?? '',
     accountId: profile?.accountId ?? '',
     usePkce: profile?.usePkce ?? false,
+    acceptMarketplaceInstalls: profile?.acceptMarketplaceInstalls ?? false,
     autoRefresh: profile?.autoRefresh ?? true,
     scopesRequested: profile?.scopesRequested ?? '',
     notes: profile?.notes ?? '',
@@ -331,6 +334,10 @@ function ProfileForm({ profile, onClose, onSaved }: { profile?: Profile; onClose
         {f.type === 'user' && (
           <>
             <label className="check"><input type="checkbox" checked={f.usePkce} onChange={(e) => set({ usePkce: e.target.checked })} />Use PKCE (S256) when authorizing</label>
+            <label className="check" style={{ alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={f.acceptMarketplaceInstalls} onChange={(e) => set({ acceptMarketplaceInstalls: e.target.checked })} style={{ marginTop: 3 }} />
+              <span>Accept installs started from the Zoom Marketplace (Add / Local Test)<br /><span className="muted small">Those callbacks carry no <code>state</code>, so they can’t be tied to a request from this portal (login-CSRF risk). PKCE does not apply to them. Leave off unless you are testing that flow.</span></span>
+            </label>
             <Field label="scope parameter (optional)" hint="Leave blank to use the scopes configured on the app"><input className="mono" value={f.scopesRequested} onChange={(e) => set({ scopesRequested: e.target.value })} /></Field>
           </>
         )}

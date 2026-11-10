@@ -18,6 +18,7 @@ const profileInput = z.object({
   accountId: z.string().trim().max(200).nullable().optional(),
   webhookSecret: secretField,
   usePkce: z.boolean().optional(),
+  acceptMarketplaceInstalls: z.boolean().optional(),
   autoRefresh: z.boolean().optional(),
   scopesRequested: z.string().max(4000).nullable().optional(),
   notes: z.string().max(20000).nullable().optional(),
