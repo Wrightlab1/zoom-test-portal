@@ -272,4 +272,21 @@ CREATE TABLE tunnel_history (
 );
 `,
   },
+  {
+    version: 2,
+    name: 'composite indexes for category-scoped report sorting and summaries',
+    sql: `
+CREATE INDEX api_calls_cat_duration ON api_calls(category, duration_ms);
+CREATE INDEX api_calls_cat_status ON api_calls(category, status);
+CREATE INDEX api_calls_cat_endpoint ON api_calls(category, method, endpoint);
+CREATE INDEX api_calls_cat_class ON api_calls(category, status_class);
+CREATE INDEX api_calls_retry ON api_calls(retry_of) WHERE retry_of IS NOT NULL;
+CREATE INDEX api_calls_rl ON api_calls(rl_category, rl_type, profile_id) WHERE rl_category IS NOT NULL;
+CREATE INDEX webhooks_response ON webhooks(response_status);
+CREATE INDEX webhooks_duplicate ON webhooks(duplicate_of) WHERE duplicate_of IS NOT NULL;
+CREATE INDEX webhooks_handle ON webhooks(handle_ms);
+DROP INDEX api_calls_duration;
+DROP INDEX api_calls_method;
+`,
+  },
 ];

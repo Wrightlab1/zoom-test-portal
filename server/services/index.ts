@@ -13,6 +13,7 @@ import { WebhooksRepo } from '../db/webhooks.js';
 import { WebhookReceiver } from './webhooks.js';
 import { CollectionsRepo } from '../db/collections.js';
 import { ExplorerService } from './explorer.js';
+import { ReportsRepo } from '../db/reports.js';
 
 /** All long-lived services, constructed once per app. */
 export class Services {
@@ -29,6 +30,7 @@ export class Services {
   readonly webhooks: WebhookReceiver;
   readonly collections: CollectionsRepo;
   readonly explorer: ExplorerService;
+  readonly reports: ReportsRepo;
   /** host:port of the public listener once it is listening */
   publicAddr = '';
   private timers: NodeJS.Timeout[] = [];
@@ -45,6 +47,7 @@ export class Services {
     this.webhooksRepo = new WebhooksRepo(ctx.db);
     this.collections = new CollectionsRepo(ctx.db, ctx.cipher);
     this.explorer = new ExplorerService(ctx, this);
+    this.reports = new ReportsRepo(ctx.db);
     this.webhooks = new WebhookReceiver(ctx, this.profiles, this.webhooksRepo);
     this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog);
 
@@ -61,7 +64,16 @@ export class Services {
       this.tunnel.start().catch((e) => console.error('[ngrok] autostart failed:', e instanceof Error ? e.message : e));
     }
     this.every(30_000, () => this.tokens.tick());
+    this.every(6 * 3600_000, () => this.applyRetention());
+    this.applyRetention();
     void this.tokens.tick().catch(() => {});
+  }
+
+  /** Purge logs older than the retention setting (0 = keep forever). */
+  applyRetention(): { calls: number; webhooks: number } | null {
+    const days = this.ctx.settings.get().retentionDays;
+    if (!days) return null;
+    return this.reports.purgeOlderThan(Date.now() - days * 86400_000);
   }
 
   async stopBackground(): Promise<void> {
