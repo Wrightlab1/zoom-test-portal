@@ -99,6 +99,8 @@ export async function createApp(overrides: Partial<AppConfig> = {}): Promise<App
     async start() {
       const adminAddr = await admin.listen({ host: cfg.adminHost, port: cfg.adminPort });
       const publicAddr = await pub.listen({ host: cfg.publicHost, port: cfg.publicPort });
+      const pa = pub.server.address();
+      if (pa && typeof pa === 'object') ctx.services.publicAddr = `${pa.family === 'IPv6' ? `[${pa.address}]` : pa.address}:${pa.port}`;
       started = true;
       await ctx.services.startBackground();
       return { adminUrl: adminAddr, publicUrl: publicAddr };

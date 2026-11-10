@@ -7,6 +7,8 @@ import { ZoomOAuthClient } from './oauthClient.js';
 import { TokenService } from './tokens.js';
 import { secrets } from '../lib/redact.js';
 import { PublicUrls } from './publicUrls.js';
+import { TunnelService } from './tunnel.js';
+import { UserOAuthService } from './userOAuth.js';
 
 /** All long-lived services, constructed once per app. */
 export class Services {
@@ -17,6 +19,10 @@ export class Services {
   readonly oauth: ZoomOAuthClient;
   readonly tokens: TokenService;
   readonly publicUrls: PublicUrls;
+  readonly tunnel: TunnelService;
+  readonly userOAuth: UserOAuthService;
+  /** host:port of the public listener once it is listening */
+  publicAddr = '';
   private timers: NodeJS.Timeout[] = [];
 
   constructor(readonly ctx: Ctx) {
@@ -27,6 +33,8 @@ export class Services {
     this.oauth = new ZoomOAuthClient(ctx, this.profiles, this.callLog);
     this.tokens = new TokenService(ctx, this.profiles, this.auths, this.oauth);
     this.publicUrls = new PublicUrls(ctx);
+    this.tunnel = new TunnelService(ctx, this.profiles, this.publicUrls, () => this.publicAddr || `${ctx.cfg.publicHost}:${ctx.cfg.publicPort}`);
+    this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog);
 
     // Every stored secret is known to the redactor before any request is handled.
     this.profiles.registerSecrets();
@@ -36,11 +44,16 @@ export class Services {
 
   async startBackground(): Promise<void> {
     if (this.ctx.cfg.disableSchedulers) return;
+    const st = this.ctx.settings.get();
+    if (st.ngrokAutostart && this.ctx.settings.getSecret('ngrokAuthtoken')) {
+      this.tunnel.start().catch((e) => console.error('[ngrok] autostart failed:', e instanceof Error ? e.message : e));
+    }
     this.every(30_000, () => this.tokens.tick());
     void this.tokens.tick().catch(() => {});
   }
 
   async stopBackground(): Promise<void> {
+    await this.tunnel.stop().catch(() => {});
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
   }

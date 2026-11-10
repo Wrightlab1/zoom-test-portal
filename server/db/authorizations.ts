@@ -117,9 +117,17 @@ export class AuthorizationsRepo {
         .get(profileId) as AuthorizationRow | undefined) ?? null
     );
   }
+  /**
+   * Live authorizations for this Zoom user on the same Zoom app — across every profile that
+   * uses this client ID (e.g. duplicated profiles), since Zoom invalidates all of them on re-consent.
+   */
   activeForZoomUser(profileId: number, zoomUserId: string): AuthorizationRow[] {
     return this.db
-      .prepare("SELECT * FROM authorizations WHERE profile_id = ? AND zoom_user_id = ? AND status != 'superseded'")
+      .prepare(
+        `SELECT a.* FROM authorizations a JOIN profiles p ON p.id = a.profile_id
+         WHERE p.client_id = (SELECT client_id FROM profiles WHERE id = ?) AND a.kind = 'user'
+           AND a.zoom_user_id = ? AND a.status IN ('active', 'failed')`,
+      )
       .all(profileId, zoomUserId) as AuthorizationRow[];
   }
 

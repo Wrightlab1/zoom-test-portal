@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Ctx } from '../context.js';
 import { loggerOptions } from '../lib/logger.js';
+import { callbackPage } from './pages.js';
 
 /**
  * The only listener the tunnel points at. It serves exactly two route families:
@@ -20,6 +21,13 @@ export function buildPublicServer(ctx: Ctx): FastifyInstance {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('Cache-Control', 'no-store');
+  });
+
+  // OAuth redirect target. The query carries `code` and `state`; neither is logged.
+  pub.get<{ Params: { slug: string }; Querystring: Record<string, string> }>('/oauth/callback/:slug', async (req, reply) => {
+    const out = await ctx.services.userOAuth.callback(req.params.slug, req.query ?? {});
+    reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    return reply.code(out.status).type('text/html; charset=utf-8').send(callbackPage(out.title, out.message, out.ok));
   });
 
   pub.setNotFoundHandler((_req, reply) => reply.code(404).type('text/plain').send('Not Found'));
