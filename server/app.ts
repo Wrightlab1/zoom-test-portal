@@ -76,9 +76,12 @@ export async function createApp(overrides: Partial<AppConfig> = {}): Promise<App
 
   const webDist = findWebDist();
   if (webDist) {
-    await admin.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false, index: ['index.html'] });
+    // wildcard: files are resolved per request, so a rebuild while running is picked up.
+    await admin.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: true, index: ['index.html'] });
     admin.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' });
+      const path = req.url.split('?')[0];
+      // API routes and anything that looks like a file get a real 404; only app routes get the SPA shell.
+      if (path.startsWith('/api/') || path.startsWith('/assets/') || /\.[a-z0-9]{1,8}$/i.test(path)) return reply.code(404).send({ error: 'not_found' });
       return reply.type('text/html').sendFile('index.html');
     });
   } else {
@@ -102,6 +105,8 @@ export async function createApp(overrides: Partial<AppConfig> = {}): Promise<App
       const pa = pub.server.address();
       if (pa && typeof pa === 'object') ctx.services.publicAddr = `${pa.family === 'IPv6' ? `[${pa.address}]` : pa.address}:${pa.port}`;
       started = true;
+      // PID file lets the CLI refuse key rotation while the server holds the old key in memory.
+      fs.writeFileSync(path.join(cfg.dataDir, 'portal.pid'), String(process.pid), { mode: 0o600 });
       await ctx.services.startBackground();
       return { adminUrl: adminAddr, publicUrl: publicAddr };
     },
@@ -110,6 +115,11 @@ export async function createApp(overrides: Partial<AppConfig> = {}): Promise<App
       if (started) {
         await pub.close();
         await admin.close();
+        try {
+          fs.rmSync(path.join(cfg.dataDir, 'portal.pid'), { force: true });
+        } catch {
+          /* ignore */
+        }
       }
       db.close();
     },

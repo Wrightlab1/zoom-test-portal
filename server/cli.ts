@@ -20,7 +20,20 @@ function openVerified() {
   return { db, cipher, key };
 }
 
+function assertServerStopped() {
+  const pidFile = `${cfg.dataDir}/portal.pid`;
+  if (!fs.existsSync(pidFile)) return;
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return; // stale pid file
+  }
+  throw new Error(`The portal appears to be running (pid ${pid}). Stop it before rotating the key.`);
+}
+
 async function rotateKey() {
+  assertServerStopped();
   const { db, cipher, key } = openVerified();
   const backup = `${cfg.dbFile}.pre-rotate-${Date.now()}`;
   await db.backup(backup);

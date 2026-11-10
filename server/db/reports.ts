@@ -30,6 +30,8 @@ const common = {
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(500).default(50),
   dir: z.enum(['asc', 'desc']).default('desc'),
+  /** Viewer's UTC offset in minutes (e.g. -300), so day buckets start at local midnight. */
+  tz: z.coerce.number().int().min(-840).max(840).default(0),
 };
 
 export const callFilters = z.object({
@@ -225,8 +227,9 @@ export class ReportsRepo {
       series: {
         bucket: bucket.label,
         bucketMs: bucket.ms,
+        offsetMs: f.tz * 60000,
         points: q<{ t: number; ok: number; failed: number }>(
-          `SELECT (ts / ${bucket.ms}) * ${bucket.ms} t, SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END) ok, SUM(CASE WHEN status >= 400 OR status IS NULL THEN 1 ELSE 0 END) failed
+          `SELECT ((ts + ${f.tz * 60000}) / ${bucket.ms}) * ${bucket.ms} - ${f.tz * 60000} t, SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END) ok, SUM(CASE WHEN status >= 400 OR status IS NULL THEN 1 ELSE 0 END) failed
            FROM api_calls ${w.sql} GROUP BY t ORDER BY t`,
         ),
       },
@@ -279,8 +282,9 @@ export class ReportsRepo {
       series: {
         bucket: bucket.label,
         bucketMs: bucket.ms,
+        offsetMs: f.tz * 60000,
         points: q<{ t: number; ok: number; failed: number }>(
-          `SELECT (received_at / ${bucket.ms}) * ${bucket.ms} t, SUM(CASE WHEN response_status < 400 THEN 1 ELSE 0 END) ok, SUM(CASE WHEN response_status >= 400 THEN 1 ELSE 0 END) failed
+          `SELECT ((received_at + ${f.tz * 60000}) / ${bucket.ms}) * ${bucket.ms} - ${f.tz * 60000} t, SUM(CASE WHEN response_status < 400 THEN 1 ELSE 0 END) ok, SUM(CASE WHEN response_status >= 400 THEN 1 ELSE 0 END) failed
            FROM webhooks ${w.sql} GROUP BY t ORDER BY t`,
         ),
       },
