@@ -1,0 +1,15 @@
+services:
+  portal:
+    build: .
+    image: zoom-test-portal:local
+    restart: unless-stopped
+    ports:
+      # Admin UI on the host's loopback only. Do not change to "4800:4800".
+      - "127.0.0.1:4800:4800"
+    volumes:
+      - ./data:/data          # SQLite database (portal.db)
+      - ./secrets:/secrets    # master.key — back this up separately from the database
+    environment:
+      ZTP_LOG_LEVEL: info
+      # Alternatively supply the key directly instead of the key file:
+      # ZTP_MASTER_KEY: ${ZTP_MASTER_KEY}
