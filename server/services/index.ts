@@ -9,6 +9,8 @@ import { secrets } from '../lib/redact.js';
 import { PublicUrls } from './publicUrls.js';
 import { TunnelService } from './tunnel.js';
 import { UserOAuthService } from './userOAuth.js';
+import { WebhooksRepo } from '../db/webhooks.js';
+import { WebhookReceiver } from './webhooks.js';
 
 /** All long-lived services, constructed once per app. */
 export class Services {
@@ -21,6 +23,8 @@ export class Services {
   readonly publicUrls: PublicUrls;
   readonly tunnel: TunnelService;
   readonly userOAuth: UserOAuthService;
+  readonly webhooksRepo: WebhooksRepo;
+  readonly webhooks: WebhookReceiver;
   /** host:port of the public listener once it is listening */
   publicAddr = '';
   private timers: NodeJS.Timeout[] = [];
@@ -34,6 +38,8 @@ export class Services {
     this.tokens = new TokenService(ctx, this.profiles, this.auths, this.oauth);
     this.publicUrls = new PublicUrls(ctx);
     this.tunnel = new TunnelService(ctx, this.profiles, this.publicUrls, () => this.publicAddr || `${ctx.cfg.publicHost}:${ctx.cfg.publicPort}`);
+    this.webhooksRepo = new WebhooksRepo(ctx.db);
+    this.webhooks = new WebhookReceiver(ctx, this.profiles, this.webhooksRepo);
     this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog);
 
     // Every stored secret is known to the redactor before any request is handled.

@@ -14,7 +14,12 @@ export interface BusEvents {
   call: [Record<string, unknown>];
 }
 
-export class Bus extends EventEmitter<BusEvents> {}
+export class Bus extends EventEmitter<BusEvents> {
+  constructor() {
+    super();
+    this.setMaxListeners(100); // one set per open SSE connection
+  }
+}
 
 /** Shared application context: configuration, storage and services. */
 export interface Ctx {
