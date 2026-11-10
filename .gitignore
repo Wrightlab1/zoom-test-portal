@@ -1,0 +1,20 @@
+# Secrets and local data — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.key.*
+master.key*
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Build / deps
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.vite/
