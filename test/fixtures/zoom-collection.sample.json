@@ -1,0 +1,192 @@
+{
+  "info": {
+    "_postman_id": "00000000-1111-2222-3333-444444444444",
+    "name": "Zoom Meeting API (sample fixture)",
+    "description": "Synthetic fixture modelled on the structure of Zoom's published Postman collection. No real data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bearerToken}}", "type": "string" }] },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.zoom.us/v2", "type": "string" },
+    { "key": "bearerToken", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Meetings",
+      "description": { "content": "Meeting APIs", "type": "text/plain" },
+      "item": [
+        {
+          "name": "Meetings",
+          "item": [
+            {
+              "id": "req-list-meetings",
+              "name": "List meetings",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": {
+                  "raw": "{{baseUrl}}/users/:userId/meetings?type=scheduled&page_size=30&next_page_token=&page_number=1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["users", ":userId", "meetings"],
+                  "query": [
+                    { "key": "type", "value": "scheduled", "description": "The type of meeting.\n* `scheduled` - All valid previous, live, and upcoming scheduled meetings." },
+                    { "key": "page_size", "value": "30", "description": "The number of records returned within a single API call." },
+                    { "key": "next_page_token", "value": "", "description": "Use the next page token to paginate through large result sets.", "disabled": true },
+                    { "key": "page_number", "value": "1", "disabled": true }
+                  ],
+                  "variable": [{ "key": "userId", "value": "me", "description": "(Required) The user's user ID or email address. For user-level apps, pass the `me` value." }]
+                },
+                "description": "List a user's (meeting host) scheduled meetings.\n\n**Scopes:** `meeting:read`,`meeting:read:admin`\n\n**[Rate Limit Label](https://developers.zoom.us/docs/api/rest/rate-limits/):** `Medium`"
+              },
+              "response": [
+                {
+                  "name": "HTTP Status Code: `200`",
+                  "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/users/:userId/meetings" } },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [{ "key": "Content-Type", "value": "application/json" }],
+                  "body": "{\n \"next_page_token\": \"\",\n \"page_size\": 30,\n \"total_records\": 1,\n \"meetings\": [\n  {\n   \"id\": 85746065432,\n   \"topic\": \"My Meeting\",\n   \"type\": 2\n  }\n ]\n}"
+                },
+                {
+                  "name": "HTTP Status Code: `404`  User does not exist: {userId}.",
+                  "status": "Not Found",
+                  "code": 404,
+                  "header": [{ "key": "Content-Type", "value": "application/json" }],
+                  "body": "{\"code\":1001,\"message\":\"User does not exist: {userId}.\"}"
+                }
+              ]
+            },
+            {
+              "id": "req-create-meeting",
+              "name": "Create a meeting",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Accept", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"My Meeting\",\n  \"type\": 2,\n  \"start_time\": \"2026-12-01T10:00:00Z\",\n  \"duration\": 30,\n  \"settings\": { \"waiting_room\": true }\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/users/:userId/meetings",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["users", ":userId", "meetings"],
+                  "variable": [{ "key": "userId", "value": "me" }]
+                },
+                "description": { "content": "Create a meeting for a user.", "type": "text/markdown" }
+              },
+              "response": [{ "name": "201", "status": "Created", "code": 201, "header": [], "body": "{\"id\": 85746065432}" }]
+            },
+            {
+              "id": "req-get-meeting",
+              "name": "Get a meeting",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/meetings/:meetingId?occurrence_id=&show_previous_occurrences=",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["meetings", ":meetingId"],
+                  "query": [
+                    { "key": "occurrence_id", "value": "", "disabled": true },
+                    { "key": "show_previous_occurrences", "value": "", "disabled": true }
+                  ],
+                  "variable": [{ "key": "meetingId", "value": "", "description": "The meeting's ID. When storing this value in your database, store it as a long format integer." }]
+                }
+              },
+              "response": []
+            },
+            {
+              "id": "req-past-meeting",
+              "name": "Get past meeting details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/past_meetings/:meetingId",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["past_meetings", ":meetingId"],
+                  "variable": [{ "key": "meetingId", "value": "", "description": "The meeting's ID or universally unique ID (UUID). If the UUID begins with `/` or contains `//`, double-encode it." }]
+                }
+              },
+              "response": []
+            },
+            {
+              "id": "req-update-rtms-status",
+              "name": "Update participant Real-Time Media Streams (RTMS) app status",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"action\": \"start\",\n  \"settings\": { \"participant_user_id\": \"\", \"client_id\": \"{{clientId}}\" }\n}", "options": { "raw": { "language": "json" } } },
+                "url": "{{baseUrl}}/live_meetings/:meetingId/rtms_app/status"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Cloud Recording",
+          "auth": { "type": "oauth2", "oauth2": [{ "key": "accessToken", "value": "{{accessToken}}" }] },
+          "item": [
+            {
+              "name": "Delete meeting recordings",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/meetings/:meetingId/recordings?action=trash",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["meetings", ":meetingId", "recordings"],
+                  "query": [{ "key": "action", "value": "trash", "description": "`trash` or `delete`" }],
+                  "variable": [{ "key": "meetingId" }]
+                }
+              },
+              "response": [{ "name": "No content", "status": "No Content", "code": 204, "header": [], "body": "" }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": "Accept: application/json\nX-Fixture: yes",
+            "url": {
+              "raw": "{{baseUrl}}/users?status=active&page_size=30",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"],
+              "query": [
+                { "key": "status", "value": "active" },
+                { "key": "page_size", "value": "30" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List users (duplicate entry in another place)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] } },
+          "response": []
+        },
+        {
+          "name": "Update user (form)",
+          "request": {
+            "method": "PATCH",
+            "body": { "mode": "urlencoded", "urlencoded": [{ "key": "first_name", "value": "Ada" }, { "key": "last_name", "value": "", "disabled": true }] },
+            "url": { "raw": "{{baseUrl}}/users/:userId", "host": ["{{baseUrl}}"], "path": ["users", ":userId"] }
+          },
+          "response": []
+        },
+        { "name": "Broken item without request" }
+      ]
+    }
+  ]
+}

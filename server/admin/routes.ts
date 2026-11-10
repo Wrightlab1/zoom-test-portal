@@ -5,6 +5,7 @@ import { registerProfileRoutes } from './profiles.js';
 import { registerSettingsRoutes } from './settings.js';
 import { registerTunnelRoutes } from './tunnel.js';
 import { registerStreamRoutes } from './stream.js';
+import { registerExplorerRoutes } from './explorer.js';
 
 export function registerAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   installErrorHandler(app);
@@ -13,4 +14,5 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   registerSettingsRoutes(app, ctx);
   registerTunnelRoutes(app, ctx);
   registerStreamRoutes(app, ctx);
+  registerExplorerRoutes(app, ctx);
 }

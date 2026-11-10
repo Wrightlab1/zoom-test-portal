@@ -11,6 +11,8 @@ import { TunnelService } from './tunnel.js';
 import { UserOAuthService } from './userOAuth.js';
 import { WebhooksRepo } from '../db/webhooks.js';
 import { WebhookReceiver } from './webhooks.js';
+import { CollectionsRepo } from '../db/collections.js';
+import { ExplorerService } from './explorer.js';
 
 /** All long-lived services, constructed once per app. */
 export class Services {
@@ -25,6 +27,8 @@ export class Services {
   readonly userOAuth: UserOAuthService;
   readonly webhooksRepo: WebhooksRepo;
   readonly webhooks: WebhookReceiver;
+  readonly collections: CollectionsRepo;
+  readonly explorer: ExplorerService;
   /** host:port of the public listener once it is listening */
   publicAddr = '';
   private timers: NodeJS.Timeout[] = [];
@@ -39,6 +43,8 @@ export class Services {
     this.publicUrls = new PublicUrls(ctx);
     this.tunnel = new TunnelService(ctx, this.profiles, this.publicUrls, () => this.publicAddr || `${ctx.cfg.publicHost}:${ctx.cfg.publicPort}`);
     this.webhooksRepo = new WebhooksRepo(ctx.db);
+    this.collections = new CollectionsRepo(ctx.db, ctx.cipher);
+    this.explorer = new ExplorerService(ctx, this);
     this.webhooks = new WebhookReceiver(ctx, this.profiles, this.webhooksRepo);
     this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog);
 

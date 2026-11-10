@@ -1,0 +1,11 @@
+{
+  "id": "env-0000-1111",
+  "name": "Zoom sample env",
+  "values": [
+    { "key": "baseUrl", "value": "https://api.zoom.us/v2", "enabled": true },
+    { "key": "clientId", "value": "fixture-client-id", "enabled": true },
+    { "key": "bearerToken", "value": "fixture-not-a-real-token", "type": "secret", "enabled": true },
+    { "key": "unused", "value": "x", "enabled": false }
+  ],
+  "_postman_variable_scope": "environment"
+}
