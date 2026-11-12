@@ -22,6 +22,27 @@ export interface Authorization {
   statusDetail: string | null;
   usedPkce: boolean;
   version: number;
+  bulkGrantId: number | null;
+}
+export interface BulkGrant {
+  id: number;
+  profileId: number;
+  bulkTokenHint: string | null;
+  tokenType: string | null;
+  expiresAt: number | null;
+  batchSize: number;
+  status: 'waiting' | 'fetching' | 'complete' | 'failed' | 'expired';
+  statusDetail: string | null;
+  pages: number;
+  usersReceived: number;
+  attempts: number;
+  nextAttemptAt: number | null;
+  lastError: string | null;
+  apiUrl: string | null;
+  origin: string;
+  createdAt: number;
+  completedAt: number | null;
+  authorizations: { active: number; other: number };
 }
 export interface Profile {
   id: number;
@@ -94,10 +115,14 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
   const [showOld, setShowOld] = useState(false);
   const events = useAsync<any[]>(() => get(`/api/profiles/${p.id}/token-events`), [p.id]);
   const full = useAsync<Profile>(() => get(`/api/profiles/${p.id}`), [p.id]);
+  const bulk = useAsync<BulkGrant[]>(() => (p.type === 'user' ? get(`/api/profiles/${p.id}/bulk-grants`) : Promise.resolve([])), [p.id, p.type]);
+  const [authFilter, setAuthFilter] = useState('');
+  const [authLimit, setAuthLimit] = useState(25);
   useLive('token', (e) => {
     if (e.profileId === p.id) {
       events.reload();
       full.reload();
+      bulk.reload();
     }
   });
   const run = async (label: string, fn: () => Promise<unknown>, ok?: string) => {
@@ -108,17 +133,23 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
       reload();
       full.reload();
       events.reload();
+      bulk.reload();
     } catch (e) {
       toast(errMsg(e), 'error');
       events.reload();
       full.reload();
+      bulk.reload();
     } finally {
       setBusy(null);
     }
   };
   const auths = (full.data ?? p).authorizations;
-  const visible = auths.filter((a) => showOld || a.status !== 'superseded');
-  const hidden = auths.length - visible.length;
+  const notOld = auths.filter((a) => showOld || a.status !== 'superseded');
+  const hidden = auths.length - notOld.length;
+  const q = authFilter.trim().toLowerCase();
+  const bulkQ = /^bulk #(\d+)$/.exec(q);
+  const matching = bulkQ ? notOld.filter((a) => a.bulkGrantId === Number(bulkQ[1])) : q ? notOld.filter((a) => [a.zoomEmail, a.zoomName, a.zoomUserId, String(a.id), a.bulkGrantId ? `bulk #${a.bulkGrantId}` : ''].some((x) => x?.toLowerCase().includes(q))) : notOld;
+  const visible = matching.slice(0, authLimit);
 
   const authorize = async () => {
     try {
@@ -173,6 +204,8 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
         </div>
       </div>
 
+      {p.type === 'user' && <BulkGrants grants={bulk.data ?? []} profile={p} busy={busy} run={run} onFilter={(id) => { setAuthFilter(`bulk #${id}`); setAuthLimit(25); }} />}
+
       <div className="card" style={{ marginTop: 12 }}>
         <div className="row" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>{p.type === 's2s' ? 'Access token' : 'Authorizations'}</h3>
@@ -185,14 +218,24 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
             <button className="primary sm" onClick={authorize} disabled={!p.urls || !p.clientSecretHint} title={!p.urls ? 'Start the tunnel first' : undefined}>Authorize…</button>
           )}
         </div>
-        {visible.length === 0 && <div className="muted small">{p.type === 's2s' ? 'No token yet. "Get new token" requests one with grant_type=account_credentials.' : 'No authorizations yet. "Authorize…" sends you through Zoom consent; each Zoom user you authorize as gets its own entry.'}</div>}
+        {notOld.length > 10 && (
+          <div className="row" style={{ marginBottom: 8 }}>
+            <input type="search" placeholder="Filter by email, name, user ID, or bulk #n" value={authFilter} onChange={(e) => setAuthFilter(e.target.value)} style={{ width: 340, maxWidth: '100%' }} />
+            <span className="muted small">{matching.length.toLocaleString()} of {notOld.length.toLocaleString()} shown{matching.length > visible.length ? ` (first ${visible.length})` : ''}</span>
+          </div>
+        )}
+        {notOld.length === 0 && <div className="muted small">{p.type === 's2s' ? 'No token yet. "Get new token" requests one with grant_type=account_credentials.' : 'No authorizations yet. "Authorize…" sends you through Zoom consent; each Zoom user you authorize as gets its own entry.'}</div>}
         <div className="col" style={{ gap: 10 }}>
           {visible.map((a) => (
             <AuthCard key={a.id} a={a} busy={busy} run={run} />
           ))}
         </div>
-        {hidden > 0 && <button className="sm ghost" style={{ marginTop: 6 }} onClick={() => setShowOld(true)}>Show {hidden} superseded</button>}
+        <div className="row" style={{ marginTop: 6 }}>
+          {matching.length > visible.length && <button className="sm ghost" onClick={() => setAuthLimit(authLimit + 50)}>Show 50 more</button>}
+          {hidden > 0 && <button className="sm ghost" onClick={() => setShowOld(true)}>Show {hidden} superseded</button>}
+        </div>
       </div>
+
 
       <div className="card flush" style={{ marginTop: 12 }}>
         <div className="card-head"><h2 className="grow">Token events</h2><span className="muted small">issued · refreshed · revoked · failed (with Zoom’s error)</span></div>
@@ -221,6 +264,66 @@ function ProfileDetail({ profile: p, reload, onDeleted, onDuplicated }: { profil
   );
 }
 
+const bulkStatusCls: Record<BulkGrant['status'], string> = { waiting: 'info', fetching: 'info', complete: 'good', failed: 'bad', expired: 'warn' };
+
+/** Admin authorizations for users and groups: one row per code_type=bulk callback. */
+function BulkGrants({ grants, profile: p, busy, run, onFilter }: { grants: BulkGrant[]; profile: Profile; busy: string | null; run: (l: string, fn: () => Promise<unknown>, ok?: string) => void; onFilter: (id: number) => void }) {
+  return (
+    <div className="card flush" style={{ marginTop: 12 }}>
+      <div className="card-head">
+        <h2 className="grow">Admin authorizations</h2>
+        <span className="muted small">users and groups · code_type=bulk</span>
+      </div>
+      {grants.length === 0 ? (
+        <div className="small muted" style={{ padding: '10px 14px' }}>
+          None yet. When an admin uses <b>Add for others → Users and groups</b> on this app, Zoom redirects here with <code>code_type=bulk</code>; the portal exchanges the code for a bulk access token and then retrieves a token for every covered user.
+          {!p.acceptMarketplaceInstalls && <> Those callbacks carry no <code>state</code>, so enable <b>Accept installs started from the Zoom Marketplace</b> on this profile first.</>}
+          {' '}Zoom must also enable <i>non-interactive batch token retrieval</i> for the app.
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data">
+            <thead><tr><th>Grant</th><th>Status</th><th className="num">Users</th><th>Bulk token</th><th>Next attempt / error</th><th /></tr></thead>
+            <tbody>
+              {grants.map((g) => (
+                <tr key={g.id}>
+                  <td className="nowrap"><b>#{g.id}</b><div className="small muted">{fmtTime(g.createdAt)}</div></td>
+                  <td>
+                    <span className={`badge ${bulkStatusCls[g.status]}`}>{g.status}</span>
+                    {g.statusDetail && <div className="small muted" style={{ minWidth: 180, maxWidth: 280 }}>{g.statusDetail}</div>}
+                  </td>
+                  <td className="num">
+                    {g.usersReceived.toLocaleString()}
+                    <div className="small muted nowrap">{g.pages} page{g.pages === 1 ? '' : 's'} × {g.batchSize}</div>
+                    {g.authorizations.active !== g.usersReceived && <div className="small muted">{g.authorizations.active} active</div>}
+                  </td>
+                  <td>{g.bulkTokenHint ? <Countdown to={g.expiresAt} /> : <span className="muted small">discarded</span>}</td>
+                  <td className="small">
+                    {g.nextAttemptAt && (g.status === 'waiting' || g.status === 'fetching') && <div>retry {fmtTime(g.nextAttemptAt)} (attempt {g.attempts + 1})</div>}
+                    {g.status === 'fetching' && !g.nextAttemptAt && <div><Spinner /> retrieving…</div>}
+                    {g.lastError && <div style={{ color: 'var(--critical-text)' }}>{g.lastError}</div>}
+                  </td>
+                  <td>
+                    <div className="col" style={{ gap: 4, alignItems: 'stretch' }}>
+                    {g.bulkTokenHint && g.status !== 'fetching' && (
+                      <button className="sm" disabled={!!busy} onClick={() => run(`b${g.id}`, () => post(`/api/bulk-grants/${g.id}/fetch`), 'Retrieval finished')}>
+                        {busy === `b${g.id}` ? <Spinner /> : null} {g.status === 'complete' || g.status === 'failed' ? 'Fetch again' : 'Fetch now'}
+                      </button>
+                    )}
+                    {g.authorizations.active + g.authorizations.other > 0 && <button className="sm ghost" onClick={() => onFilter(g.id)}>Show users</button>}
+                    <button className="sm ghost" disabled={!!busy} onClick={() => confirm(`Forget bulk grant #${g.id} and its bulk token? User authorizations it produced are kept.`) && run(`bd${g.id}`, () => del(`/api/bulk-grants/${g.id}`))}>Remove</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AuthCard({ a, busy, run }: { a: Authorization; busy: string | null; run: (l: string, fn: () => Promise<unknown>, ok?: string) => void }) {
   const reveal = (field: 'access_token' | 'refresh_token') => async () => (await post(`/api/authorizations/${a.id}/reveal`, { field })).value as string;
   const statusCls = a.status === 'active' ? 'good' : a.status === 'failed' ? 'bad' : a.status === 'revoked' ? 'warn' : '';
@@ -232,6 +335,7 @@ function AuthCard({ a, busy, run }: { a: Authorization; busy: string | null; run
         <span className={`badge ${statusCls}`}>{a.status}</span>
         {a.status === 'active' && <Countdown to={a.accessExpiresAt} />}
         {a.usedPkce && <span className="badge info">PKCE</span>}
+        {a.bulkGrantId && <span className="badge info" title="Issued through an admin authorization for users and groups (code_type=bulk)">bulk #{a.bulkGrantId}</span>}
         <span className="grow" />
         {a.kind === 'user' && a.status !== 'superseded' && a.status !== 'revoked' && (
           <button className="sm" disabled={!!busy} onClick={() => run(`r${a.id}`, () => post(`/api/authorizations/${a.id}/refresh`), 'Refreshed (new refresh token stored)')}>{busy === `r${a.id}` ? <Spinner /> : null} Refresh now</button>
@@ -336,7 +440,7 @@ function ProfileForm({ profile, onClose, onSaved }: { profile?: Profile; onClose
             <label className="check"><input type="checkbox" checked={f.usePkce} onChange={(e) => set({ usePkce: e.target.checked })} />Use PKCE (S256) when authorizing</label>
             <label className="check" style={{ alignItems: 'flex-start' }}>
               <input type="checkbox" checked={f.acceptMarketplaceInstalls} onChange={(e) => set({ acceptMarketplaceInstalls: e.target.checked })} style={{ marginTop: 3 }} />
-              <span>Accept installs started from the Zoom Marketplace (Add / Local Test)<br /><span className="muted small">Those callbacks carry no <code>state</code>, so they can’t be tied to a request from this portal (login-CSRF risk). PKCE does not apply to them. Leave off unless you are testing that flow.</span></span>
+              <span>Accept installs started from the Zoom Marketplace (Add / Local Test / Add for others → users and groups)<br /><span className="muted small">Those callbacks carry no <code>state</code>, so they can’t be tied to a request from this portal (login-CSRF risk). PKCE does not apply to them. Admin authorizations for users and groups (<code>code_type=bulk</code>) always arrive this way. Leave off unless you are testing these flows.</span></span>
             </label>
             <Field label="scope parameter (optional)" hint="Leave blank to use the scopes configured on the app"><input className="mono" value={f.scopesRequested} onChange={(e) => set({ scopesRequested: e.target.value })} /></Field>
           </>

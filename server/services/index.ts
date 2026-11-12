@@ -14,6 +14,8 @@ import { WebhookReceiver } from './webhooks.js';
 import { CollectionsRepo } from '../db/collections.js';
 import { ExplorerService } from './explorer.js';
 import { ReportsRepo } from '../db/reports.js';
+import { BulkGrantsRepo } from '../db/bulkGrants.js';
+import { BulkAuthService } from './bulkAuth.js';
 
 /** All long-lived services, constructed once per app. */
 export class Services {
@@ -31,6 +33,8 @@ export class Services {
   readonly collections: CollectionsRepo;
   readonly explorer: ExplorerService;
   readonly reports: ReportsRepo;
+  readonly bulkGrants: BulkGrantsRepo;
+  readonly bulk: BulkAuthService;
   /** host:port of the public listener once it is listening */
   publicAddr = '';
   private timers: NodeJS.Timeout[] = [];
@@ -49,11 +53,14 @@ export class Services {
     this.explorer = new ExplorerService(ctx, this);
     this.reports = new ReportsRepo(ctx.db);
     this.webhooks = new WebhookReceiver(ctx, this.profiles, this.webhooksRepo);
-    this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog);
+    this.bulkGrants = new BulkGrantsRepo(ctx.db, ctx.cipher);
+    this.bulk = new BulkAuthService(ctx, this.profiles, this.auths, this.bulkGrants, this.oauth);
+    this.userOAuth = new UserOAuthService(ctx, this.profiles, this.auths, this.oauth, this.publicUrls, this.callLog, this.bulk);
 
     // Every stored secret is known to the redactor before any request is handled.
     this.profiles.registerSecrets();
     this.auths.registerSecrets();
+    this.bulkGrants.registerSecrets();
     secrets.add(ctx.settings.getSecret('ngrokAuthtoken'));
   }
 
@@ -64,6 +71,11 @@ export class Services {
       this.tunnel.start().catch((e) => console.error('[ngrok] autostart failed:', e instanceof Error ? e.message : e));
     }
     this.every(30_000, () => this.tokens.tick());
+    this.every(15_000, async () => {
+      this.bulk.sweepExpired();
+      await this.bulk.tick();
+    });
+    void this.bulk.tick().catch(() => {});
     this.every(6 * 3600_000, () => this.applyRetention());
     this.applyRetention();
     void this.tokens.tick().catch(() => {});
@@ -78,6 +90,7 @@ export class Services {
 
   async stopBackground(): Promise<void> {
     await this.tunnel.stop().catch(() => {});
+    this.bulk.stop();
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
   }

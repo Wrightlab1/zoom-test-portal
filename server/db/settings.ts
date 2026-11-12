@@ -32,6 +32,10 @@ export interface Settings {
   lastPublicUrl: string;
   /** Refresh user tokens / re-request S2S tokens when this many seconds remain. */
   refreshLeadSec: number;
+  /** Admin (bulk) authorization: wait this long after the bulk code exchange before asking for user tokens. Zoom says user-token preparation may be asynchronous and suggests 1–2 minutes. */
+  bulkFirstFetchDelaySec: number;
+  /** batch_size for the bulk token exchange (Zoom: default 100, max 500; must stay the same within a session). */
+  bulkBatchSize: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -46,6 +50,8 @@ export const DEFAULT_SETTINGS: Settings = {
   publicBaseUrlOverride: '',
   lastPublicUrl: '',
   refreshLeadSec: 300,
+  bulkFirstFetchDelaySec: 90,
+  bulkBatchSize: 100,
 };
 
 export const SECRET_SETTINGS = ['ngrokAuthtoken'] as const;

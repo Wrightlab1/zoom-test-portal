@@ -27,6 +27,8 @@ const settingsPatch = z.object({
   retentionDays: z.number().int().min(0).max(3650).optional(),
   maxStoredBodyBytes: z.number().int().min(1024).max(16 * 1024 * 1024).optional(),
   refreshLeadSec: z.number().int().min(30).max(3000).optional(),
+  bulkFirstFetchDelaySec: z.number().int().min(0).max(1800).optional(),
+  bulkBatchSize: z.number().int().min(1).max(500).optional(),
   ngrokDomain: z.string().trim().max(253).regex(/^[a-z0-9.-]*$/i, 'hostname only, no scheme').optional(),
   ngrokAutostart: z.boolean().optional(),
   publicBaseUrlOverride: z.union([z.literal(''), urlField]).optional(),

@@ -30,6 +30,8 @@ export function SettingsPage() {
         retentionDays: Number(form.retentionDays),
         maxStoredBodyBytes: Number(form.maxStoredBodyBytes),
         refreshLeadSec: Number(form.refreshLeadSec),
+        bulkFirstFetchDelaySec: Number(form.bulkFirstFetchDelaySec),
+        bulkBatchSize: Number(form.bulkBatchSize),
         publicBaseUrlOverride: form.publicBaseUrlOverride,
       });
       toast('Settings saved');
@@ -58,6 +60,10 @@ export function SettingsPage() {
             <Field label="Default API base URL" hint="Used when a token has no api_url. Normally https://api.zoom.us"><input className="mono" value={form.apiBaseUrl} onChange={(e) => set({ apiBaseUrl: e.target.value })} /></Field>
           </div>
           <Field label="Refresh lead time (seconds)" hint="Refresh user tokens / re-request S2S tokens when this much time is left"><input type="number" value={form.refreshLeadSec} onChange={(e) => set({ refreshLeadSec: e.target.value })} style={{ width: 120 }} /></Field>
+          <div className="grid2">
+            <Field label="Admin (bulk) authorization: first fetch delay (seconds)" hint="After a code_type=bulk callback, wait this long before exchanging the bulk token for user tokens. Zoom prepares them asynchronously and suggests 1–2 minutes; failed attempts retry with backoff until the bulk token expires."><input type="number" min={0} max={1800} value={form.bulkFirstFetchDelaySec} onChange={(e) => set({ bulkFirstFetchDelaySec: e.target.value })} style={{ width: 120 }} /></Field>
+            <Field label="Admin (bulk) authorization: batch_size" hint="User tokens per token-exchange page (Zoom: default 100, max 500). Fixed per grant once it starts."><input type="number" min={1} max={500} value={form.bulkBatchSize} onChange={(e) => set({ bulkBatchSize: e.target.value })} style={{ width: 120 }} /></Field>
+          </div>
         </div>
         <div className="card col">
           <h2>Webhooks</h2>

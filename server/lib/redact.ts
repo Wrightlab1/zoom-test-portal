@@ -17,6 +17,7 @@ const SECRET_KEYS = new Set([
   'id_token',
   'client_secret',
   'code_verifier',
+  'subject_token',
   'password',
   'secret',
   'secret_token',

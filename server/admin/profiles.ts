@@ -89,6 +89,25 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: Ctx) {
     return s.auths.view(row);
   });
 
+  // ---- admin (bulk) authorizations: code_type=bulk ----
+  app.get('/api/profiles/:id/bulk-grants', async (req) => {
+    const { id } = idParam.parse(req.params);
+    if (!s.profiles.get(id)) throw new HttpError(404, 'not_found', 'Profile not found');
+    return s.bulkGrants.listForProfile(id).map((g) => s.bulkGrants.view(g));
+  });
+
+  /** Retrieve user tokens now: continues a waiting/failed grant, or re-runs a finished one. */
+  app.post('/api/bulk-grants/:id/fetch', async (req) => {
+    const g = await s.bulk.run(idParam.parse(req.params).id, { manual: true });
+    return s.bulkGrants.view(g);
+  });
+
+  /** Forget the grant and its bulk token. User authorizations it produced are kept. */
+  app.delete('/api/bulk-grants/:id', async (req) => {
+    if (!s.bulk.delete(idParam.parse(req.params).id)) throw new HttpError(404, 'not_found');
+    return { ok: true };
+  });
+
   // ---- authorizations ----
   app.get('/api/authorizations/:id', async (req) => {
     const row = s.auths.get(idParam.parse(req.params).id);

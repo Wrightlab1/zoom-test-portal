@@ -105,6 +105,23 @@ export class ZoomOAuthClient {
     };
   }
 
+  /**
+   * POST /oauth/token and return the parsed JSON as-is, for responses that are not a single token
+   * set (the RFC 8693 bulk token exchange returns { api_url, items[], has_more }).
+   */
+  async tokenRaw(p: ProfileRow, form: Record<string, string>, authorizationId: number | null = null) {
+    const r = await this.post(p, '/oauth/token', form, { authorizationId, grantType: form.grant_type });
+    const zerr = r.status === 200 ? { code: null, message: null } : parseZoomError(r.json ? JSON.stringify(r.json) : null);
+    return {
+      ok: r.status === 200 && r.json != null,
+      status: r.status,
+      json: r.json,
+      callId: r.callId,
+      errorCode: zerr.code,
+      errorMessage: r.status === 200 ? (r.json == null ? 'Response was not JSON' : null) : (r.error ?? zerr.message ?? (r.status ? `HTTP ${r.status}` : 'No response')),
+    };
+  }
+
   async revoke(p: ProfileRow, token: string, authorizationId: number | null): Promise<TokenCallResult> {
     const r = await this.post(p, '/oauth/revoke', { token }, { authorizationId, grantType: 'revoke' });
     const zerr = parseZoomError(r.json ? JSON.stringify(r.json) : null);

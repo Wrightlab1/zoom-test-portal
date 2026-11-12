@@ -221,6 +221,45 @@ How authorizations behave:
 - Each Zoom user you authorize as becomes its own **authorization**, labelled from `/v2/users/me`.
 - If the **same** user authorizes the **same** app again, Zoom invalidates the earlier tokens (error 4741). The portal marks the old authorization *superseded* instead of letting it fail later. This also applies across profiles that share a client ID.
 
+### Admin authorization for users and groups (`code_type=bulk`)
+
+Zoom lets an admin authorize a user-managed General app on behalf of users, groups or the whole account ([Zoom docs](https://developers.zoom.us/docs/integrations/admin-auth-for-users-and-groups/)). The portal follows that flow automatically whenever the callback carries `code_type=bulk`; callbacks without it use the normal flow above.
+
+Before you start:
+
+- Zoom must enable **non-interactive batch token retrieval** for your app. Per the docs, you currently request this from Zoom support or the Developer Forum.
+- The admin needs Marketplace **View** and **Edit** permissions (User Management → Roles).
+- On the profile, enable **Accept installs started from the Zoom Marketplace**. Bulk callbacks always start in the Marketplace and carry no `state`, so without it they are rejected with *Admin authorization rejected*, before any token request is made.
+
+To test it: Marketplace → your app → **Local Test** → **Preview your app listing page** → **Add for others** → **Users and groups**, then pick the users or groups.
+
+What the portal does:
+
+1. **Callback** `?code=…&code_type=bulk`. If a `state` is present it is still verified.
+2. **Code exchange**: `POST /oauth/token` with `grant_type=authorization_code`, the code and the same redirect URI. Zoom returns a **bulk access token** (`token_type: bulk_access_token`). The portal stores it encrypted as a *bulk grant* and never uses it against the REST API.
+3. **User tokens**: after **Settings → first fetch delay** (default 90 s, because Zoom prepares user tokens asynchronously and recommends waiting 1–2 minutes), the portal calls `POST /oauth/token` with:
+   - `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`
+   - `subject_token=<bulk token>`
+   - `subject_token_type=urn:ietf:params:oauth:token-type:bulk_access_token`
+   - `batch_size` from Settings (default 100, max 500). It stays fixed for the grant, because Zoom rejects the cursor if it changes.
+
+   It repeats the call while `has_more` is `true`.
+4. Each `items[]` entry becomes an ordinary **user authorization**: email, scopes, `api_url`, and access and refresh tokens. It gets a `bulk #n` badge and can be refreshed, revealed, revoked and used in the explorer like any other.
+
+Where to see it:
+
+- The profile's **Admin authorizations** table shows each grant's status (`waiting`, `fetching`, `complete`, `failed`, `expired`), users received, pages, bulk-token expiry, the next retry and Zoom's last error.
+- **Fetch now** runs a waiting grant immediately. **Fetch again** makes a fresh pass over a finished grant, and its tokens supersede the earlier pass's. **Show users** filters the authorization list to that grant.
+- The token events show `bulk_issued`, one `bulk_page` per page, and `bulk_complete`.
+- Every call appears under API calls → *Token endpoint*, with `subject_token` and all returned tokens redacted.
+
+Behaviour the portal decides for itself, because the docs don't state it:
+
+- **Failed page requests** retry with backoff (30 s, doubling, capped at 5 min) until the bulk token expires (typically 1 h). The grant is then marked `failed` or `expired`, and the bulk token is deleted.
+- **Restarts**: grants survive a restart, and retrieval resumes.
+- **Users identified by email**: bulk items carry an email, not a Zoom user ID. A later bulk pass, or the user's own consent through **Authorize…**, supersedes an earlier authorization for the same email on the same client ID. The superseded rows keep their token values, because the docs don't say whether Zoom invalidates them. **Look up user** fills in the Zoom user ID from `/v2/users/me`.
+- **Not handled**: refresh and revocation rules specific to bulk-issued tokens, and webhooks for users being added to or removed from an admin grant, are not documented. The portal treats these tokens like ordinary user tokens.
+
 ---
 
 ## Importing Zoom's Postman collection
@@ -369,6 +408,11 @@ npm run typecheck
   - `account_credentials`, `authorization_code` (5-minute single-use codes, redirect and PKCE checks), `refresh_token` (rotation: the old token dies immediately; optional delay to test races) and `client_credentials`
   - Zoom-shaped errors
 - `/oauth/revoke`, and re-authorization that invalidates a user's earlier tokens (4741)
+- admin bulk authorization:
+  - `GET /__mock_admin/bulk-authorize?client_id=…&redirect_uri=…&count=N` (or `&users=mockuser001,…`) stands in for **Add for others** and redirects with `code` and `code_type=bulk`
+  - the bulk code exchange returns a `bulk_access_token`
+  - the `token-exchange` grant returns paged `items[]` with `has_more`, and rejects a changed `batch_size` mid-session
+  - `POST /__mock/config {"bulkPrepMs": 60000}` simulates user tokens that are still being prepared. The real Zoom error for that case isn't documented, so the mock's error is invented.
 - `/v2/users/me`, paginated `/v2/users` (57 users), `/v2/past_meetings/{uuid}` (requires double encoding), `/v2/ratelimit-test` (429), and a redirecting download
 - `X-RateLimit-*` and `x-zm-trackingid` on every response
 - test controls: `POST /__mock/expire`, `/__mock/config`, `GET /__mock/stats`
@@ -390,7 +434,8 @@ The tests cover:
 | Redaction | headers, JSON, form bodies, URLs, and registered secret values in free text |
 | Postman parser | a realistic Zoom-shaped fixture |
 | Allowlist | allowed and blocked hosts, wildcards, explicit http entries |
-| User OAuth | state replay and forgery, PKCE enforcement, supersession |
+| User OAuth | state replay and forgery, PKCE enforcement, supersession, Marketplace-initiated installs |
+| Admin bulk authorization | rejected without the opt-in, code exchange, paging, retry while tokens are being prepared, re-fetch supersession, email-matched supersession, redaction of `subject_token` and the tokens returned, expiry |
 | Explorer | pagination, double encoding, 429, retries, redirects, curl, replay |
 | Reports | filters, search, export, retention, scale |
 | Admin protection | session, CSRF, Origin, Host, and that the public listener exposes nothing else |
@@ -437,6 +482,17 @@ Work through this once with real credentials. Each step says what "pass" looks l
 - [ ] Open a consent link, wait more than 5 minutes before approving (or reuse a callback URL). *Pass: a clear error page and a `failed` event (e.g. code expired / invalid state).*
 - [ ] Click **Revoke**. *Pass: status `revoked`; an API call with it now fails.*
 
+**Admin authorization for users and groups** (only once Zoom has enabled batch token retrieval for the app)
+
+- [ ] Enable **Accept installs started from the Zoom Marketplace** on the profile. In the Marketplace: Local Test → Preview your app listing page → **Add for others** → Users and groups, and pick a small group. *Pass: the tab says "Admin authorization received"; the profile shows a grant in the `waiting` state.*
+- [ ] Wait for the first fetch delay. *Pass:*
+  - *the grant becomes `complete`*
+  - *the user count matches the group*
+  - *one authorization per user appears, with a `bulk #n` badge, an email and an `api_url`*
+- [ ] If Zoom wasn't ready, *Pass: the grant shows `waiting`, with Zoom's error and the next retry time, then completes on retry.* Please note the exact error Zoom returned, because the docs don't state it.
+- [ ] Explorer: `GET {{baseUrl}}/users/me` with one of those authorizations. *Pass: 200, that user.* Click **Refresh now** on it. *Pass: a `refreshed` event.*
+- [ ] API calls → Token endpoint: open the `token-exchange` call. *Pass: `subject_token=[REDACTED]…` in the request; every `access_token` and `refresh_token` in the response is redacted.*
+
 **Webhooks**
 
 - [ ] Paste the profile's webhook URL and the Marketplace **Secret Token** (into the profile), then click **Validate** in the Marketplace. *Pass:*
@@ -466,6 +522,8 @@ Work through this once with real credentials. Each step says what "pass" looks l
 | Zoom **4709** Redirect URI mismatch | Marketplace OAuth Redirect URL / Allow List not identical to the portal's value (scheme, host, path, trailing slash). The URL changed without a reserved domain: see the warning banner. |
 | **4702/4704** invalid client | Wrong client ID or secret, or S2S credentials used for a General app (or vice versa). |
 | Callback page: **Authorization started outside the portal** / "missing code or state" | Consent was started from the Marketplace (Add / Local Test / authorization URL), which sends no `state`. Use **Authorize…** in the portal, or enable *Accept installs started from the Zoom Marketplace* on the profile. |
+| Callback page: **Admin authorization rejected** | The admin used *Add for others → Users and groups* (`code_type=bulk`), which sends no `state`. Enable *Accept installs started from the Zoom Marketplace* on the profile and add the app for the users again (bulk codes are single use). |
+| Bulk grant stuck in `waiting` with an error | Zoom is still preparing user tokens (it retries automatically), or *non-interactive batch token retrieval* isn't enabled for the app (ask Zoom). The last error shows Zoom's response. |
 | **4733 / 4734** code expired / invalid | Consent took longer than 5 minutes, or the callback was replayed. Authorize again. |
 | **4741** token revoked | The same user re-authorized (the old authorization is shown as superseded). Use the newest one. |
 | `400 Invalid Token!` on refresh | The refresh token was already rotated or revoked; the authorization is marked *failed*. Authorize again. |

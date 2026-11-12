@@ -16,6 +16,7 @@ export const ENCRYPTED_COLUMNS: { table: string; pk: string; column: string }[] 
   { table: 'authorizations', pk: 'id', column: 'access_token_enc' },
   { table: 'authorizations', pk: 'id', column: 'refresh_token_enc' },
   { table: 'oauth_pending', pk: 'state_hash', column: 'verifier_enc' },
+  { table: 'bulk_grants', pk: 'id', column: 'bulk_token_enc' },
   { table: 'collections', pk: 'id', column: 'variables_enc' },
   { table: 'environments', pk: 'id', column: 'values_enc' },
 ];

@@ -2,7 +2,9 @@
  * Mock Zoom OAuth + REST server for tests and local development. NOT a faithful Zoom clone:
  * it implements the behaviours the portal must handle (grant types, refresh token rotation,
  * PKCE, exact redirect URI match, re-authorization invalidating old tokens, expiry, pagination,
- * 429s, double-encoded UUIDs, redirects) with Zoom-shaped responses.
+ * 429s, double-encoded UUIDs, redirects, admin bulk authorization with code_type=bulk and RFC 8693
+ * token exchange) with Zoom-shaped responses. Where Zoom's docs don't say (e.g. the exact error
+ * while bulk user tokens are still being prepared), the mock picks something plausible.
  *
  * All credentials here are fake test values.
  */
@@ -48,7 +50,25 @@ interface RefreshRec {
   scope: string;
 }
 
+interface BulkCodeRec {
+  clientId: string;
+  redirectUri: string;
+  userIds: string[];
+  exp: number;
+  used: boolean;
+}
+interface BulkTokenRec {
+  clientId: string;
+  userIds: string[];
+  exp: number;
+  issuedAt: number;
+  cursor: number;
+  batchSize: number | null;
+}
+
 export interface MockConfig {
+  /** Bulk sessions answer token-exchange with an error until this long after the bulk token was issued. */
+  bulkPrepMs: number;
   tokenTtlSec: number;
   refreshDelayMs: number;
   currentUser: string;
@@ -86,7 +106,9 @@ export function createMockZoom(opts: { clients?: MockClient[] } = {}) {
   const access = new Map<string, AccessRec>();
   const refresh = new Map<string, RefreshRec>();
   const pageTokens = new Map<string, number>();
-  const config: MockConfig = { tokenTtlSec: 3600, refreshDelayMs: 0, currentUser: 'mockuser001', failNextToken: null };
+  const bulkCodes = new Map<string, BulkCodeRec>();
+  const bulkTokens = new Map<string, BulkTokenRec>();
+  const config: MockConfig = { bulkPrepMs: 0, tokenTtlSec: 3600, refreshDelayMs: 0, currentUser: 'mockuser001', failNextToken: null };
   const stats: MockStats = { tokenRequests: {}, apiRequests: 0, revokes: 0 };
   let baseUrl = '';
 
@@ -164,6 +186,15 @@ export function createMockZoom(opts: { clients?: MockClient[] } = {}) {
       case 'client_credentials':
         return send(res, 200, issue(client.clientId, null, 'imchat:bot', false));
       case 'authorization_code': {
+        const bc = bulkCodes.get(p.get('code') ?? '');
+        if (bc) {
+          if (bc.clientId !== client.clientId || bc.used || bc.exp < Date.now()) return send(res, 400, { reason: 'Invalid authorization code', error: 'invalid_request' });
+          if (p.get('redirect_uri') !== bc.redirectUri) return send(res, 400, { reason: 'Redirect URI mismatch.', error: 'invalid_request' });
+          bc.used = true;
+          const bt = 'bt_' + rand(32);
+          bulkTokens.set(bt, { clientId: client.clientId, userIds: bc.userIds, exp: Date.now() + 3600_000, issuedAt: Date.now(), cursor: 0, batchSize: null });
+          return send(res, 200, { access_token: bt, token_type: 'bulk_access_token', expires_in: 3600 });
+        }
         const code = codes.get(p.get('code') ?? '');
         if (!code || code.clientId !== client.clientId) return send(res, 400, { reason: 'Invalid authorization code', error: 'invalid_request' });
         if (code.used) return send(res, 400, { reason: 'Invalid authorization code', error: 'invalid_request' });
@@ -185,6 +216,30 @@ export function createMockZoom(opts: { clients?: MockClient[] } = {}) {
         if (!rec || rec.clientId !== client.clientId) return send(res, 400, { reason: 'Invalid Token!', error: 'invalid_request' });
         refresh.delete(rt); // rotation: the old refresh token stops working immediately
         return send(res, 200, issue(client.clientId, rec.userId, rec.scope, true, rec.family));
+      }
+      case 'urn:ietf:params:oauth:grant-type:token-exchange': {
+        if (p.get('subject_token_type') !== 'urn:ietf:params:oauth:token-type:bulk_access_token') {
+          return send(res, 400, { reason: 'Invalid subject_token_type', error: 'invalid_request' });
+        }
+        const bt = bulkTokens.get(p.get('subject_token') ?? '');
+        if (!bt || bt.clientId !== client.clientId) return send(res, 401, { reason: 'Invalid Token!', error: 'invalid_token' });
+        if (bt.exp < Date.now()) return send(res, 401, { reason: 'Bulk access token is expired', error: 'invalid_token' });
+        if (Date.now() < bt.issuedAt + config.bulkPrepMs) return send(res, 400, { reason: 'User tokens are being prepared. Retry later.', error: 'temporarily_unavailable' });
+        const size = p.has('batch_size') ? Number(p.get('batch_size')) : 100;
+        if (!Number.isInteger(size) || size < 1 || size > 500) return send(res, 400, { reason: 'Invalid batch_size', error: 'invalid_request' });
+        if (bt.batchSize != null && bt.cursor > 0 && bt.batchSize !== size) return send(res, 400, { reason: 'Invalid cursor: batch_size changed', error: 'invalid_request' });
+        bt.batchSize = size;
+        const slice = bt.userIds.slice(bt.cursor, bt.cursor + size);
+        bt.cursor += slice.length;
+        const hasMore = bt.cursor < bt.userIds.length;
+        if (!hasMore) bt.cursor = 0; // a later call starts a new pass
+        const scope = 'user:read:user meeting:read:list_meetings';
+        const items = slice.map((uid) => {
+          invalidateUser(client.clientId, uid);
+          const t = issue(client.clientId, uid, scope, true);
+          return { token_type: 'bearer', access_token: t.access_token, refresh_token: t.refresh_token, scope, expires_in: config.tokenTtlSec, email: users.get(uid)?.email };
+        });
+        return send(res, 200, { api_url: baseUrl, items, has_more: hasMore });
       }
       default:
         return send(res, 400, { reason: 'Unsupported grant type', error: 'unsupported_grant_type' });
@@ -276,6 +331,22 @@ export function createMockZoom(opts: { clients?: MockClient[] } = {}) {
           default:
             return send(res, 404, { error: 'unknown mock control' });
         }
+      }
+      // Stand-in for an admin using Marketplace → "Add for others" → Users and groups.
+      // ?client_id=&redirect_uri=&users=id1,id2 (or &count=N for the first N mock users).
+      if (req.method === 'GET' && url.pathname === '/__mock_admin/bulk-authorize') {
+        const c = clients.get(url.searchParams.get('client_id') ?? '');
+        if (!c) return send(res, 400, '<h1>Invalid client_id</h1>');
+        const redirectUri = url.searchParams.get('redirect_uri') ?? c.redirectUris[0] ?? '';
+        if (!c.redirectUris.includes(redirectUri)) return send(res, 400, '<h1>Invalid redirect: 4,700</h1><p>Redirect URI mismatch.</p>');
+        const listed = (url.searchParams.get('users') ?? '').split(',').filter((u) => users.has(u));
+        const userIds = listed.length ? listed : [...users.keys()].slice(0, Number(url.searchParams.get('count') ?? users.size));
+        const code = 'mock_bulk_code_' + rand(16);
+        bulkCodes.set(code, { clientId: c.clientId, redirectUri, userIds, exp: Date.now() + 5 * 60_000, used: false });
+        const target = new URL(redirectUri);
+        target.searchParams.set('code', code);
+        target.searchParams.set('code_type', 'bulk');
+        return send(res, 302, undefined, { location: target.toString() });
       }
       if (req.method === 'GET' && url.pathname === '/oauth/authorize') {
         const c = clients.get(url.searchParams.get('client_id') ?? '');

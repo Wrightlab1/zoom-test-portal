@@ -26,6 +26,7 @@ export interface AuthorizationRow {
   version: number;
   refresh_lease_until: number | null;
   refresh_lease_owner: string | null;
+  bulk_grant_id: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -49,6 +50,8 @@ export interface AuthorizationView {
   statusDetail: string | null;
   usedPkce: boolean;
   version: number;
+  /** Set when the token came from an admin (bulk) authorization rather than the user's own consent. */
+  bulkGrantId: number | null;
 }
 
 export interface TokenSet {
@@ -120,15 +123,21 @@ export class AuthorizationsRepo {
   /**
    * Live authorizations for this Zoom user on the same Zoom app — across every profile that
    * uses this client ID (e.g. duplicated profiles), since Zoom invalidates all of them on re-consent.
+   * Matches on the Zoom user ID, or on the email when one side has no ID yet (admin bulk
+   * authorizations only report an email per user).
    */
-  activeForZoomUser(profileId: number, zoomUserId: string): AuthorizationRow[] {
+  activeForZoomUser(profileId: number, who: string | { id?: string | null; email?: string | null }): AuthorizationRow[] {
+    const { id, email } = typeof who === 'string' ? { id: who, email: null } : who;
+    if (!id && !email) return [];
     return this.db
       .prepare(
         `SELECT a.* FROM authorizations a JOIN profiles p ON p.id = a.profile_id
-         WHERE p.client_id = (SELECT client_id FROM profiles WHERE id = ?) AND a.kind = 'user'
-           AND a.zoom_user_id = ? AND a.status IN ('active', 'failed')`,
+         WHERE p.client_id = (SELECT client_id FROM profiles WHERE id = @pid) AND a.kind = 'user'
+           AND a.status IN ('active', 'failed')
+           AND ((@id IS NOT NULL AND a.zoom_user_id = @id)
+             OR (@email IS NOT NULL AND lower(a.zoom_email) = lower(@email) AND (@id IS NULL OR a.zoom_user_id IS NULL)))`,
       )
-      .all(profileId, zoomUserId) as AuthorizationRow[];
+      .all({ pid: profileId, id: id ?? null, email: email ?? null }) as AuthorizationRow[];
   }
 
   accessToken(r: AuthorizationRow): string | null {
@@ -160,6 +169,7 @@ export class AuthorizationsRepo {
       statusDetail: r.status_detail,
       usedPkce: !!r.used_pkce,
       version: r.version,
+      bulkGrantId: r.bulk_grant_id ?? null,
     };
   }
 
@@ -173,6 +183,7 @@ export class AuthorizationsRepo {
     zoomEmail?: string | null;
     zoomName?: string | null;
     zoomAccountId?: string | null;
+    bulkGrantId?: number | null;
   }): AuthorizationRow {
     const now = Date.now();
     secrets.add(p.tokens.accessToken);
@@ -180,8 +191,8 @@ export class AuthorizationsRepo {
     const info = this.db
       .prepare(
         `INSERT INTO authorizations (profile_id, kind, zoom_user_id, zoom_email, zoom_name, zoom_account_id, scopes, api_url,
-           access_token_enc, refresh_token_enc, access_expires_at, issued_at, status, used_pkce, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 1, ?, ?)`,
+           access_token_enc, refresh_token_enc, access_expires_at, issued_at, status, used_pkce, version, bulk_grant_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 1, ?, ?, ?)`,
       )
       .run(
         p.profileId,
@@ -197,6 +208,7 @@ export class AuthorizationsRepo {
         now + p.tokens.expiresIn * 1000,
         now,
         p.usedPkce ? 1 : 0,
+        p.bulkGrantId ?? null,
         now,
         now,
       );

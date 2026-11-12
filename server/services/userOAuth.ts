@@ -9,6 +9,7 @@ import type { PublicUrls } from './publicUrls.js';
 import type { CallLogger } from './callLog.js';
 import { sendOutbound } from '../lib/outbound.js';
 import { TokenError } from './tokens.js';
+import type { BulkAuthService } from './bulkAuth.js';
 
 const STATE_TTL_MS = 10 * 60_000;
 const A_VERIFIER = aad('oauth_pending', 'verifier_enc');
@@ -46,6 +47,7 @@ export class UserOAuthService {
     private oauth: ZoomOAuthClient,
     private publicUrls: PublicUrls,
     private callLog: CallLogger,
+    private bulk: BulkAuthService,
   ) {}
 
   private event(profileId: number, authId: number | null, kind: string, e: { status?: number | null; code?: string | null; message?: string | null; detail?: string; callId?: number; grant?: string } = {}) {
@@ -116,6 +118,10 @@ export class UserOAuthService {
       return { ok: false, status: 400, title: 'Invalid callback', message: 'Zoom redirected here without an authorization code.' };
     }
 
+    // Admin authorization for users and groups: Zoom adds code_type=bulk and the code must be
+    // exchanged for a bulk access token instead of a single user's tokens.
+    const bulk = (q.code_type ?? '').toLowerCase() === 'bulk';
+
     let redirectUri: string;
     let verifier: string | null = null;
     let origin: 'portal' | 'marketplace';
@@ -139,15 +145,17 @@ export class UserOAuthService {
       if (!p.accept_marketplace_installs) {
         this.event(p.id, null, 'failed', {
           code: 'no_state',
-          detail:
-            'Zoom redirected with a code but no state: consent was started from the Zoom Marketplace (Add / Local Test / authorization URL), not from the portal. Rejected; enable "Accept installs started from the Zoom Marketplace" on the profile to allow this.',
+          detail: bulk
+            ? 'Zoom redirected with code_type=bulk (an admin used "Add for others" → users and groups) and no state. Rejected; enable "Accept installs started from the Zoom Marketplace" on the profile to allow this.'
+            : 'Zoom redirected with a code but no state: consent was started from the Zoom Marketplace (Add / Local Test / authorization URL), not from the portal. Rejected; enable "Accept installs started from the Zoom Marketplace" on the profile to allow this.',
         });
         return {
           ok: false,
           status: 400,
-          title: 'Authorization started outside the portal',
-          message:
-            'This consent came from the Zoom Marketplace (Add / Local Test), which does not include the portal\'s state value, so it was rejected. Either click "Authorize…" on the profile in the portal, or edit the profile, enable "Accept installs started from the Zoom Marketplace", and add the app again.',
+          title: bulk ? 'Admin authorization rejected' : 'Authorization started outside the portal',
+          message: bulk
+            ? 'An admin authorized this app for users and groups (code_type=bulk). That always starts in the Zoom Marketplace and carries no state value, and this profile does not accept Marketplace-initiated installs. Edit the profile, enable "Accept installs started from the Zoom Marketplace", then authorize for users and groups again.'
+            : 'This consent came from the Zoom Marketplace (Add / Local Test), which does not include the portal\'s state value, so it was rejected. Either click "Authorize…" on the profile in the portal, or edit the profile, enable "Accept installs started from the Zoom Marketplace", and add the app again.',
         };
       }
       const urls = this.publicUrls.forProfile(p.slug);
@@ -158,6 +166,18 @@ export class UserOAuthService {
 
     const form: Record<string, string> = { grant_type: 'authorization_code', code: q.code, redirect_uri: redirectUri };
     if (verifier) form.code_verifier = verifier;
+
+    if (bulk) {
+      const b = await this.bulk.exchangeCode(p, form, origin);
+      if (!b.ok) return { ok: false, status: 502, title: 'Bulk token exchange failed', message: `Zoom said: ${b.errorMessage ?? 'unknown error'}` };
+      const delay = this.ctx.settings.get().bulkFirstFetchDelaySec;
+      return {
+        ok: true,
+        status: 200,
+        title: 'Admin authorization received',
+        message: `Zoom issued a bulk access token (grant #${b.grant.id}). The portal will exchange it for each user's tokens ${delay ? `in about ${delay} seconds` : 'now'}, then page through until Zoom reports no more. Progress appears on the profile page.`,
+      };
+    }
     const r = await this.oauth.token(p, form, null);
     if (!r.ok || !r.tokens) {
       this.event(p.id, null, 'failed', { status: r.status, code: r.errorCode, message: r.errorMessage, callId: r.callId, detail: `Code exchange failed (${origin === 'marketplace' ? 'Marketplace-initiated, no state' : 'started from portal'})` });
@@ -167,7 +187,7 @@ export class UserOAuthService {
     const me = await this.whoAmI(p, r.tokens.accessToken, r.tokens.apiUrl ?? null);
     const row = this.ctx.db.transaction(() => {
       if (me.id) {
-        for (const old of this.auths.activeForZoomUser(p.id, me.id)) {
+        for (const old of this.auths.activeForZoomUser(p.id, { id: me.id, email: me.email })) {
           const where = old.profile_id === p.id ? '' : ` via profile "${p.name}"`;
           this.auths.setStatus(old.id, 'superseded', `Same Zoom user re-authorized this app${where}; Zoom invalidates the previous tokens (4741).`, true);
           this.event(old.profile_id, old.id, 'superseded', { detail: `Replaced by a new authorization for the same Zoom user${where}` });

@@ -294,4 +294,33 @@ DROP INDEX api_calls_method;
     name: 'per-profile opt-in for Marketplace-initiated installs (callback without state)',
     sql: `ALTER TABLE profiles ADD COLUMN accept_marketplace_installs INTEGER NOT NULL DEFAULT 0;`,
   },
+  {
+    version: 4,
+    name: 'admin authorization for users and groups (code_type=bulk)',
+    sql: `
+CREATE TABLE bulk_grants (
+  id INTEGER PRIMARY KEY,
+  profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  bulk_token_enc TEXT,
+  token_type TEXT,
+  expires_at INTEGER,
+  batch_size INTEGER NOT NULL DEFAULT 100,
+  status TEXT NOT NULL CHECK (status IN ('waiting', 'fetching', 'complete', 'failed', 'expired')),
+  status_detail TEXT,
+  pages INTEGER NOT NULL DEFAULT 0,
+  users_received INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER,
+  last_error TEXT,
+  api_url TEXT,
+  origin TEXT NOT NULL DEFAULT 'marketplace',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX bulk_grants_profile ON bulk_grants(profile_id, id);
+CREATE INDEX bulk_grants_due ON bulk_grants(status, next_attempt_at);
+ALTER TABLE authorizations ADD COLUMN bulk_grant_id INTEGER REFERENCES bulk_grants(id) ON DELETE SET NULL;
+`,
+  },
 ];
