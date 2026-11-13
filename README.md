@@ -13,22 +13,83 @@ A self-hosted, single-user portal for testing the Zoom REST API and Zoom webhook
 
 ## Contents
 
-1. [How it is put together](#how-it-is-put-together)
-2. [First run](#first-run)
-3. [The master key: where it lives, backing it up](#the-master-key)
-4. [Configuration](#configuration)
-5. [ngrok](#ngrok)
-6. [Creating the Zoom apps (which value goes where)](#creating-the-zoom-apps)
-7. [Importing Zoom's Postman collection](#importing-zooms-postman-collection)
-8. [Using the explorer](#using-the-explorer)
-9. [Webhooks](#webhooks)
-10. [Reports and logs](#reports-and-logs)
-11. [Backup and restore](#backup-and-restore)
-12. [Docker](#docker)
-13. [Development and tests (mock Zoom)](#development-and-tests)
-14. [Checklist: verify against your real Zoom account](#checklist-verify-against-your-real-zoom-account)
-15. [Troubleshooting](#troubleshooting)
-16. [Security model](#security-model)
+1. [Quick start](#quick-start)
+2. [How it is put together](#how-it-is-put-together)
+3. [First run](#first-run)
+4. [The master key: where it lives, backing it up](#the-master-key)
+5. [Configuration](#configuration)
+6. [ngrok](#ngrok)
+7. [Creating the Zoom apps (which value goes where)](#creating-the-zoom-apps)
+8. [Importing Zoom's Postman collection](#importing-zooms-postman-collection)
+9. [Using the explorer](#using-the-explorer)
+10. [Webhooks](#webhooks)
+11. [Reports and logs](#reports-and-logs)
+12. [Backup and restore](#backup-and-restore)
+13. [Docker](#docker)
+14. [Development and tests (mock Zoom)](#development-and-tests)
+15. [Checklist: verify against your real Zoom account](#checklist-verify-against-your-real-zoom-account)
+16. [Troubleshooting](#troubleshooting)
+17. [Security model](#security-model)
+
+---
+
+## Quick start
+
+The shortest path from a fresh clone to a working token. Each step is explained in more detail in the sections below.
+
+### 1. Install and start
+
+You need **Node.js 22.12 or newer**. No `.env` file is required: every setting has a working default, and the rest are set in the UI.
+
+```bash
+git clone https://github.com/Wrightlab1/zoom-test-portal.git
+cd zoom-test-portal
+npm ci
+npm run build
+npm start
+```
+
+The console prints two boxes. Do this with them:
+
+1. **Master key:** a new key was written to `~/.config/zoom-test-portal/master.key`. Copy it into a password manager now; the database can't be read without it.
+2. **Setup code:** open **http://127.0.0.1:4800**, enter the setup code, and choose an admin password (12+ characters).
+
+> **Optional `.env`.** Copy `.env.example` to `.env` only to change defaults, for example the ports (`ZTP_ADMIN_PORT`, `ZTP_PUBLIC_PORT`), the data folder (`ZTP_DATA_DIR`), or where the key lives (`ZTP_KEY_FILE`, or `ZTP_MASTER_KEY` to pass the key itself). Keep the key outside the project folder. `.env` is git-ignored.
+
+### 2. Your first Server-to-Server app (no tunnel needed)
+
+S2S tokens come straight from Zoom's token endpoint, so this works before you set up ngrok.
+
+1. In the [Zoom Marketplace](https://marketplace.zoom.us/): **Develop → Build App → Server-to-Server OAuth App**, and give it a name.
+2. Under **Scopes**, add `user:read:user:admin` (or the classic `user:read:admin`). Fill in the required information fields, then **Activate** the app.
+3. In the portal: **Profiles & tokens → + New**.
+   - Set **App type** to *Server-to-Server OAuth*.
+   - Paste the **Account ID**, **Client ID** and **Client secret** from the app's **App Credentials** page.
+   - Click **Create**.
+4. On the profile, click **Get new token**. *Expected:* an active token with a countdown from about 60 minutes, its scopes and its `api_url`.
+5. Try it: open **API explorer**, choose the profile, and send `GET {{baseUrl}}/users?page_size=1`. `{{baseUrl}}` fills itself in from the token's `api_url`. *Expected:* `200` with one user; the call also shows up under **API calls**.
+
+### 3. Your first user OAuth app (General app)
+
+Zoom has to redirect your browser back to the portal, so this needs a public URL first.
+
+1. **Start the tunnel (once).**
+   - Get your authtoken from the [ngrok dashboard](https://dashboard.ngrok.com/get-started/your-authtoken). A free account includes one static domain, which keeps the URL the same across restarts.
+   - In the portal, open **Tunnel & URLs** and paste the authtoken. Set the **reserved domain** to your static domain (hostname only, e.g. `your-name.ngrok-free.app`).
+   - Click **Start tunnel**. *Expected:* `running` with your domain.
+2. **Create the Zoom app.** In the Marketplace: **Develop → Build App → General App → User-managed**. Under **Scopes**, add `user:read:user`. Copy the **Client ID** and **Client secret** from **App Credentials**.
+3. **Create the portal profile.** **Profiles & tokens → + New**:
+   - **App type:** *General app (user OAuth)*.
+   - Fill in a **Name** (the **Slug** is generated from it), then paste the **Client ID** and **Client secret**.
+
+   Click **Create**. The profile page now shows the **Redirect URL** (`https://YOUR-DOMAIN/oauth/callback/SLUG`) with a copy button.
+4. **Register the redirect URL.** Back in the Marketplace, open **OAuth Information** and paste that URL into both **OAuth Redirect URL** and **OAuth Allow List**. It must match exactly; a mismatch is error 4709.
+5. **Authorize.** Click **Authorize…** on the profile and approve in the Zoom tab that opens. *Expected:* the tab says **Authorized as *your name***, and the profile lists the authorization with your email, scopes and expiry.
+6. **Try it.** In the explorer, choose that profile and authorization, and send `GET {{baseUrl}}/users/me`. *Expected:* `200` with your user. **Refresh now** on the authorization rotates the tokens.
+
+> **Start consent from the portal's Authorize… button.** Zoom's own **Add** / **Local Test** buttons send no `state`, so the portal rejects them by default. See [General app](#general-app-user-oauth) step 7 for the opt-in, which admin authorization for users and groups also needs.
+
+What to read next: [Webhooks](#webhooks) to receive events, [Importing Zoom's Postman collection](#importing-zooms-postman-collection) for the full API, and the [checklist](#checklist-verify-against-your-real-zoom-account) to verify everything against your account.
 
 ---
 
@@ -470,7 +531,7 @@ Work through this once with real credentials. Each step says what "pass" looks l
 **User OAuth**
 
 - [ ] Create the General-app profile. Paste the redirect URL into **OAuth Redirect URL** and **OAuth Allow List** exactly.
-- [ ] Click **Authorize…** and approve. *Pass: the tab says "Authorized as <you>"; the profile shows the authorization with your email, scopes, `api_url` and expiry.*
+- [ ] Click **Authorize…** and approve. *Pass: the tab says "Authorized as *your name*"; the profile shows the authorization with your email, scopes, `api_url` and expiry.*
 - [ ] Explorer: `GET {{baseUrl}}/users/me` with that authorization. *Pass: 200, your user.*
 - [ ] Click **Refresh now**. *Pass:*
   - *a `refreshed` event appears*
